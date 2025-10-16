@@ -1,11 +1,15 @@
 #!/bin/bash
-
 set -euo pipefail
 
-# vars
-DB_PKGS=(mysql-server mariadb-server)
-DB_SERVICES=(mysqld mariadb)
-OTHER_PKGS=(git)
+# vars - adjust package names as needed for your distribution
+PACKAGES=(nginx nodejs docker jenkins java-11-openjdk gcc gcc-c++ python3 git make)
+
+# map packages to service names to enable/start after install (if applicable)
+declare -A SERVICE_MAP=(
+    [nginx]=nginx
+    [docker]=docker
+    [jenkins]=jenkins
+)
 
 # helpers
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -27,50 +31,31 @@ if ! has_cmd dnf; then
     exit 1
 fi
 
-# install DB (or detect existing)
-if pkg_installed mysql-server || pkg_installed mariadb-server || has_cmd mysql; then
-    echo "MySQL/MariaDB is already installed"
-else
-    INSTALLED_DB_PKG=""
-    for p in "${DB_PKGS[@]}"; do
-        if install_pkg "$p"; then
-            INSTALLED_DB_PKG="$p"
-            break
-        fi
-    done
+# install packages in a loop
+for pkg in "${PACKAGES[@]}"; do
+    if pkg_installed "$pkg"; then
+        echo "$pkg is already installed (rpm query passed)"
+        continue
+    fi
 
-    if [ -z "${INSTALLED_DB_PKG}" ]; then
-        echo "Neither mysql-server nor mariadb-server could be installed"
+    # try installing
+    if install_pkg "$pkg"; then
+        echo "$pkg installed successfully"
+    else
+        echo "Failed to install $pkg"
         exit 1
     fi
 
-    # determine service name
-    DB_SERVICE=""
-    for s in "${DB_SERVICES[@]}"; do
-        if systemctl list-unit-files | grep -q "^${s}\.service" || systemctl status "${s}" >/dev/null 2>&1; then
-            DB_SERVICE="$s"
-            break
-        fi
-    done
-
-    if [ -n "${DB_SERVICE}" ]; then
-        systemctl enable --now "${DB_SERVICE}"
-        echo "${DB_SERVICE} enabled and started"
-    else
-        echo "Could not determine DB service name. Please enable/start the database service manually."
-    fi
-fi
-
-# install other packages
-for p in "${OTHER_PKGS[@]}"; do
-    if pkg_installed "$p" || has_cmd "$p"; then
-        echo "$p is already installed"
-    else
-        if install_pkg "$p"; then
-            echo "$p installed successfully"
+    # if package has an associated service, enable/start it
+    svc="${SERVICE_MAP[$pkg]:-}"
+    if [ -n "$svc" ]; then
+        if systemctl list-unit-files | grep -q "^${svc}\.service" || systemctl status "$svc" >/dev/null 2>&1; then
+            systemctl enable --now "$svc"
+            echo "Service $svc enabled and started"
         else
-            echo "$p installation failed"
-            exit 1
+            echo "Service $svc not found; please enable/start it manually if required"
         fi
     fi
 done
+
+echo "All requested packages processed."
